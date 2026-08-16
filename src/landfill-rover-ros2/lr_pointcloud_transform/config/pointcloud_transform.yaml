@@ -1,0 +1,6 @@
+pointcloud_transform_node:
+  ros__parameters:
+    input_topic: /zed/zed_node/point_cloud/cloud_registered
+    output_topic: /lr/pointcloud/odom
+    target_frame: odom
+    transform_timeout_sec: 0.5
