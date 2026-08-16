@@ -92,7 +92,7 @@ ZED camera / SVO
        │              ▼                                   │
        │   lr_pointcloud_transform ◄── /tf, /tf_static    │
        │              │                                   │
-       │              └── /lr/pointcloud/odom ─────┐      │
+       │              └── /lr/point_cloud/cloud_in_map ─┐ │
        │                                             ▼      ▼
        └────────────────────────────────────── lr_display_rviz2
 ```
@@ -159,8 +159,8 @@ tiên.
 | `ros_params_override_path` | Rỗng | File YAML ghi đè tham số của ZED wrapper. |
 | `param_overrides` | Rỗng | Các tham số ZED wrapper inline, phân tách bằng dấu chấm phẩy. |
 | `input_topic` | `/<camera_name>/zed_node/point_cloud/cloud_registered` | Point cloud đầu vào. |
-| `output_topic` | `/lr/pointcloud/odom` | Point cloud đã transform. |
-| `target_frame` | `odom` | TF frame đích. |
+| `output_topic` | `/lr/point_cloud/cloud_in_map` | Point cloud đã transform vào frame `map`. |
+| `target_frame` | `map` | Frame cố định, được ZED căn theo trọng lực khi `set_gravity_as_origin` được bật. |
 | `transform_timeout_sec` | `0.5` | Thời gian tối đa chờ transform, tính bằng giây. |
 | `use_rviz` | `true` | Bật hoặc tắt RViz2. |
 
@@ -178,7 +178,7 @@ Với `camera_name:=zed`, stack sử dụng các topic chính sau:
 | --- | --- | --- |
 | `/zed/zed_node/rgb/color/rect/image` | `sensor_msgs/msg/Image` | Ảnh RGB đã rectification từ ZED wrapper. |
 | `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/msg/PointCloud2` | Registered point cloud đầu vào. |
-| `/lr/pointcloud/odom` | `sensor_msgs/msg/PointCloud2` | Point cloud đã được đổi sang `target_frame`. |
+| `/lr/point_cloud/cloud_in_map` | `sensor_msgs/msg/PointCloud2` | Point cloud đã được đổi sang frame `map`. |
 | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | Các transform cần để đổi hệ tọa độ. |
 | `/clock` | `rosgraph_msgs/msg/Clock` | Simulation clock khi phát SVO với `publish_svo_clock:=true`. |
 
@@ -203,8 +203,8 @@ Cũng có thể ghi đè từng tham số:
 ```bash
 ros2 run lr_pointcloud_transform pointcloud_transform_node --ros-args \
   -p input_topic:=/zed/zed_node/point_cloud/cloud_registered \
-  -p output_topic:=/lr/pointcloud/odom \
-  -p target_frame:=odom \
+  -p output_topic:=/lr/point_cloud/cloud_in_map \
+  -p target_frame:=map \
   -p transform_timeout_sec:=0.5
 ```
 
@@ -222,7 +222,7 @@ Nếu ZED wrapper đã chạy, chỉ mở RViz2 và hiển thị output của no
 ros2 launch lr_display_rviz2 display_zed_cam.launch.py \
   camera_model:=zed2i \
   start_zed_node:=false \
-  pointcloud_topic:=/lr/pointcloud/odom
+  pointcloud_topic:=/lr/point_cloud/cloud_in_map
 ```
 
 Cấu hình mặc định của RViz2 dùng fixed frame `map` và target view
@@ -250,8 +250,8 @@ Sau khi launch, có thể kiểm tra nhanh graph ROS 2:
 
 ```bash
 ros2 node list
-ros2 topic hz /lr/pointcloud/odom
-ros2 topic echo /lr/pointcloud/odom --once --field header
+ros2 topic hz /lr/point_cloud/cloud_in_map
+ros2 topic echo /lr/point_cloud/cloud_in_map --once --field header
 ```
 
 ## Giấy phép

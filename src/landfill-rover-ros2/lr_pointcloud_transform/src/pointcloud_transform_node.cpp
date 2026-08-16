@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -21,6 +22,8 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "tf2/exceptions.h"
 #include "tf2_ros/buffer.h"
+#include "tf2_ros/create_timer_ros.hpp"
+#include "tf2_ros/message_filter.hpp"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
 
@@ -35,8 +38,8 @@ public:
     input_topic_ = declare_parameter<std::string>(
       "input_topic", "/zed/zed_node/point_cloud/cloud_registered");
     output_topic_ = declare_parameter<std::string>(
-      "output_topic", "/lr/pointcloud/odom");
-    target_frame_ = declare_parameter<std::string>("target_frame", "odom");
+      "output_topic", "/lr/point_cloud/cloud_in_map");
+    target_frame_ = declare_parameter<std::string>("target_frame", "map");
     transform_timeout_sec_ = declare_parameter<double>("transform_timeout_sec", 0.5);
 
     if (input_topic_.empty()) {
@@ -54,11 +57,26 @@ public:
 
     const auto input_qos = rclcpp::SensorDataQoS();
     const auto output_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
+    const auto transform_timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(transform_timeout_sec_));
+
+    tf_buffer_.setCreateTimerInterface(
+      std::make_shared<tf2_ros::CreateTimerROS>(
+        get_node_base_interface(), get_node_timers_interface()));
 
     publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_topic_, output_qos);
+    tf_filter_ = std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>>(
+      tf_buffer_, target_frame_, 30,
+      get_node_logging_interface(), get_node_clock_interface(),
+      transform_timeout);
+    tf_filter_->registerCallback(
+      std::bind(&PointcloudTransformNode::pointcloud_callback, this, std::placeholders::_1));
+
     subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       input_topic_, input_qos,
-      std::bind(&PointcloudTransformNode::pointcloud_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) {
+        tf_filter_->add(message);
+      });
 
     RCLCPP_INFO(
       get_logger(), "Transforming PointCloud2: %s -> %s (target frame: %s)",
@@ -78,8 +96,7 @@ private:
     try {
       const auto transform = tf_buffer_.lookupTransform(
         target_frame_, message->header.frame_id,
-        rclcpp::Time(message->header.stamp),
-        rclcpp::Duration::from_seconds(transform_timeout_sec_));
+        rclcpp::Time(message->header.stamp));
 
       sensor_msgs::msg::PointCloud2 transformed;
       tf2::doTransform(*message, transformed, transform);
@@ -102,6 +119,7 @@ private:
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;
+  std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>> tf_filter_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
 };
 

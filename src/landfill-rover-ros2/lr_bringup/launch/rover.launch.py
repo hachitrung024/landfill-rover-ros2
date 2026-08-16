@@ -148,12 +148,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'output_topic',
-            default_value='/lr/pointcloud/odom',
+            default_value='/lr/point_cloud/cloud_in_map',
             description='Transformed PointCloud2 output topic.',
         ),
         DeclareLaunchArgument(
             'target_frame',
-            default_value='odom',
+            default_value='map',
             description='TF frame into which the point cloud is transformed.',
         ),
         DeclareLaunchArgument(
