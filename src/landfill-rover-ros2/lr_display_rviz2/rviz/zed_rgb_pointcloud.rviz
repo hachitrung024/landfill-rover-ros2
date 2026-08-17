@@ -15,6 +15,8 @@ Panels:
       - /Current View1
     Name: Views
     Splitter Ratio: 0.5
+  - Class: lr_display_rviz2/SvoPlaybackPanel
+    Name: SVO Playback
 Visualization Manager:
   Class: ""
   Displays:
