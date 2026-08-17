@@ -16,6 +16,7 @@ ros2_ws/
     ├── landfill-rover-ros2/
     │   ├── lr_bringup/
     │   ├── lr_display_rviz2/
+    │   ├── lr_mavlink_replay/
     │   └── lr_pointcloud_transform/
     └── zed-ros2-wrapper/          # Git submodule
 ```
@@ -76,6 +77,7 @@ source ~/ros2_ws/install/setup.bash
 | Package | Chức năng |
 | --- | --- |
 | [`lr_bringup`](./src/landfill-rover-ros2/lr_bringup) | Entry point khởi chạy camera/SVO, node xử lý point cloud và RViz2. |
+| [`lr_mavlink_replay`](./src/landfill-rover-ros2/lr_mavlink_replay) | Đọc GPS/attitude MAVLink CSV, nội suy pose ENU tại timestamp của từng point cloud SVO. |
 | [`lr_pointcloud_transform`](./src/landfill-rover-ros2/lr_pointcloud_transform) | Biến đổi `sensor_msgs/msg/PointCloud2` sang frame đích bằng TF tại timestamp của message. |
 | [`lr_display_rviz2`](./src/landfill-rover-ros2/lr_display_rviz2) | Khởi chạy RViz2 với cấu hình hiển thị ảnh RGB và registered point cloud. |
 
@@ -95,6 +97,22 @@ ZED camera / SVO
        │              └── /lr/point_cloud/cloud_in_map ─┐ │
        │                                             ▼      ▼
        └────────────────────────────────────── lr_display_rviz2
+```
+
+Khi SVO có một cặp CSV hợp lệ, nguồn pose được khóa sang MAVLink cho toàn
+session:
+
+```text
+GPS CSV ─────┐
+             ├─ mavlink_csv_pose_node ─ position + attitude + future Path
+Attitude CSV ┘                                  (cùng stamp cloud) │
+                                                                 ▼
+ZED SVO ── registered PointCloud2 ── pointcloud_transform_node
+                                                    │
+                          TF: map → lr_base_link → zed_camera_link
+                                                    │
+                                                    ▼
+                              /lr/point_cloud/cloud_in_map
 ```
 
 ## Sử dụng
@@ -122,6 +140,51 @@ ros2 launch lr_bringup rover.launch.py \
 
 Khi `publish_svo_clock:=true`, ZED wrapper phát `/clock`; node transform và
 RViz2 cùng sử dụng simulation time của bản ghi.
+
+### Phát lại SVO với pose MAVLink CSV
+
+```bash
+ros2 launch lr_bringup rover.launch.py \
+  camera_model:=zed2i \
+  svo_path:=/workspace/svo/zed_20260710_092420_0001.svo2 \
+  gps_path:=/workspace/data/session_20260710_0924_mavlink/gps.csv \
+  attitude_path:=/workspace/data/session_20260710_0924_mavlink/attitude.csv \
+  publish_svo_clock:=true \
+  use_rviz:=true
+```
+
+Node replay đọc và kiểm tra toàn bộ hai file khi launch. GPS cần `lat`, `lon`,
+`alt`, `fix_type`, ít nhất hai fix duy nhất có `fix_type >= 3`; attitude cần
+`roll`, `pitch`, `yaw` radian và ít nhất hai timestamp duy nhất. Cả hai định
+dạng thời gian `timestamp_unix_s` và `t_wall_epoch_us` đều được hỗ trợ.
+
+Khi hợp lệ, trung bình tối đa 20 fix GPS đầu được dùng làm gốc local ENU
+(X Đông, Y Bắc, Z lên); attitude MAVLink NED/FRD được đổi sang ENU/FLU (base
+X trước, Y trái, Z lên), rồi nội suy tại đúng timestamp của point cloud. ZED
+bị tắt `publish_tf` và
+`publish_map_tf`; cây TF lúc này là:
+
+```text
+map → lr_base_link → zed_camera_link → zed_left_camera_frame
+```
+
+Nếu đang chạy camera live, thiếu một CSV, hoặc CSV sai path/schema/nội dung,
+launch không tạo node replay và giữ pipeline TF của ZED:
+
+```text
+map → odom → zed_camera_link → zed_left_camera_frame
+```
+
+Sau khi một cặp CSV đã hợp lệ, session không fallback từng frame. Cloud nằm
+ngoài khoảng log, nằm giữa hai GPS cách nhau hơn 2 giây, hoặc giữa hai attitude
+cách nhau hơn 0,5 giây sẽ bị bỏ. Cách này tránh trộn hai hệ `world` khác nhau.
+
+Tại mỗi cloud hợp lệ, node cũng publish đoạn GPS đã ghi từ thời điểm hiện tại
+đến 10 giây tiếp theo lên `/lr/mavlink/trajectory_future`, mặc định cách nhau
+0,2 giây; orientation của mỗi pose biểu diễn hướng tiếp tuyến của đường GPS.
+`Path.header.stamp` bằng timestamp cloud, nên node xử lý địa hình có
+thể đồng bộ `Path` với `/lr/point_cloud/cloud_in_map`. Path dừng ở gap đầu tiên
+hoặc cuối log; nó không nối đường xuyên qua vùng thiếu dữ liệu.
 
 ### Chạy headless
 
@@ -160,9 +223,23 @@ tiên.
 | `param_overrides` | Rỗng | Các tham số ZED wrapper inline, phân tách bằng dấu chấm phẩy. |
 | `input_topic` | `/<camera_name>/zed_node/point_cloud/cloud_registered` | Point cloud đầu vào. |
 | `output_topic` | `/lr/point_cloud/cloud_in_map` | Point cloud đã transform vào frame `map`. |
-| `target_frame` | `map` | Frame cố định, được ZED căn theo trọng lực khi `set_gravity_as_origin` được bật. |
+| `target_frame` | `map` | Frame cố định: do ZED cung cấp ở mode ZED, hoặc local ENU ở mode MAVLink. |
 | `transform_timeout_sec` | `0.5` | Thời gian tối đa chờ transform, tính bằng giây. |
+| `gps_path` | Rỗng | GPS MAVLink CSV; chỉ dùng khi phát SVO và có cả `attitude_path`. |
+| `attitude_path` | Rỗng | Attitude MAVLink CSV radian; chỉ dùng khi phát SVO và có cả `gps_path`. |
+| `mavlink_position_topic` | `/lr/mavlink/position_enu` | Vị trí ENU của rover base tại timestamp cloud. |
+| `mavlink_attitude_topic` | `/lr/mavlink/attitude_enu` | Hướng ENU/FLU của rover base tại timestamp cloud. |
+| `mavlink_future_path_topic` | `/lr/mavlink/trajectory_future` | Đoạn trajectory tương lai đã ghi, kiểu `nav_msgs/msg/Path`. |
+| `future_path_horizon_s` | `10.0` | Khoảng thời gian nhìn trước của trajectory, tính bằng giây. |
+| `future_path_step_s` | `0.2` | Khoảng thời gian giữa hai pose trên trajectory. |
+| `mavlink_base_frame` | `lr_base_link` | Tên frame FLU của rover base. |
+| `base_to_camera_x_m`, `base_to_camera_y_m`, `base_to_camera_z_m` | `0.0` | Tịnh tiến camera trong base FLU, đơn vị mét. |
+| `base_to_camera_roll_deg`, `base_to_camera_pitch_deg`, `base_to_camera_yaw_deg` | `0.0` | Fixed-axis RPY của camera trong base, đơn vị độ. |
 | `use_rviz` | `true` | Bật hoặc tắt RViz2. |
+
+Sáu giá trị extrinsic bằng 0 vẫn chạy và tương đương giả sử base trùng
+`zed_camera_link`, nhưng node sẽ cảnh báo để tránh quên hiệu chuẩn vị trí lắp
+camera.
 
 Xem danh sách trực tiếp từ launch file:
 
@@ -179,12 +256,29 @@ Với `camera_name:=zed`, stack sử dụng các topic chính sau:
 | `/zed/zed_node/rgb/color/rect/image` | `sensor_msgs/msg/Image` | Ảnh RGB đã rectification từ ZED wrapper. |
 | `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/msg/PointCloud2` | Registered point cloud đầu vào. |
 | `/lr/point_cloud/cloud_in_map` | `sensor_msgs/msg/PointCloud2` | Point cloud đã được đổi sang frame `map`. |
+| `/lr/mavlink/position_enu` | `geometry_msgs/msg/PointStamped` | Vị trí rover base trong `map`; chỉ có ở chế độ MAVLink CSV. |
+| `/lr/mavlink/attitude_enu` | `geometry_msgs/msg/QuaternionStamped` | Hướng rover base trong `map`; chỉ có ở chế độ MAVLink CSV. |
+| `/lr/mavlink/trajectory_future` | `nav_msgs/msg/Path` | Trajectory đã ghi phía trước rover trong `map`; cùng stamp với cloud hiện tại. |
 | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | Các transform cần để đổi hệ tọa độ. |
 | `/clock` | `rosgraph_msgs/msg/Clock` | Simulation clock khi phát SVO với `publish_svo_clock:=true`. |
 
 Node `lr_pointcloud_transform` tra TF tại đúng `header.stamp` của point cloud,
 biến đổi dữ liệu XYZ rồi cập nhật `header.frame_id`. Message sẽ bị bỏ qua và
 phát cảnh báo có throttle nếu thiếu TF trong khoảng timeout cấu hình.
+
+Trong chế độ MAVLink, hai topic pose có `header.stamp` giống chính xác cloud đã
+kích hoạt nội suy. Transform node exact-sync cặp message này, phát dynamic TF
+`map → lr_base_link`, phát static TF extrinsic `lr_base_link →
+zed_camera_link`, rồi để TF MessageFilter xử lý cloud khi chuỗi transform đúng
+timestamp đã đầy đủ.
+
+RViz được cấu hình sẵn display `Future GPS Trajectory` màu cam. Vì point cloud
+và Path cùng ở `map`, đường được vẽ trực tiếp trong không gian 3D hiện tại.
+Một node detect plane sau này chỉ cần đồng bộ hai topic theo `header.stamp`, tạo
+corridor quanh `Path`, rồi lọc điểm từ cloud nằm trong corridor đó.
+
+Lưu ý: đây là phần tương lai đã tồn tại trong GPS CSV, phù hợp cho replay và
+đánh giá offline; nó không phải trajectory được dự đoán từ dữ liệu live.
 
 ## Chạy từng thành phần
 
@@ -232,17 +326,17 @@ nếu dùng tên camera khác, có thể truyền một file RViz riêng bằng
 
 ## Kiểm tra
 
-Build riêng ba package và chạy lint test:
+Build riêng bốn package và chạy unit/integration/lint test:
 
 ```bash
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 
 colcon build --symlink-install --packages-select \
-  lr_bringup lr_display_rviz2 lr_pointcloud_transform
+  lr_bringup lr_display_rviz2 lr_mavlink_replay lr_pointcloud_transform
 source install/setup.bash
 colcon test --packages-select \
-  lr_bringup lr_display_rviz2 lr_pointcloud_transform
+  lr_bringup lr_display_rviz2 lr_mavlink_replay lr_pointcloud_transform
 colcon test-result --verbose
 ```
 
@@ -253,6 +347,20 @@ ros2 node list
 ros2 topic hz /lr/point_cloud/cloud_in_map
 ros2 topic echo /lr/point_cloud/cloud_in_map --once --field header
 ```
+
+Với SVO + CSV, kiểm tra thêm nguồn pose, timestamp và cây TF:
+
+```bash
+ros2 node list | grep mavlink_csv_pose_node
+ros2 topic echo /lr/mavlink/position_enu --once
+ros2 topic echo /lr/mavlink/attitude_enu --once
+ros2 topic echo /lr/mavlink/trajectory_future --once --field header
+ros2 run tf2_ros tf2_echo map zed_left_camera_frame
+ros2 param get /zed/zed_node pos_tracking.publish_tf
+```
+
+Lệnh cuối phải trả về `False`; output cloud phải có `frame_id: map` và tiếp tục
+có dữ liệu trên `ros2 topic hz /lr/point_cloud/cloud_in_map`.
 
 ## Giấy phép
 

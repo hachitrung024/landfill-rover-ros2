@@ -35,6 +35,7 @@ def generate_launch_description():
     param_overrides = LaunchConfiguration('param_overrides')
     pointcloud_topic = LaunchConfiguration('pointcloud_topic')
     rgb_topic = LaunchConfiguration('rgb_topic')
+    future_path_topic = LaunchConfiguration('future_path_topic')
     rviz_config = LaunchConfiguration('rviz_config')
 
     default_rviz_config = os.path.join(
@@ -75,6 +76,7 @@ def generate_launch_description():
         remappings=[
             ('zed_node/point_cloud/cloud_registered', pointcloud_topic),
             ('zed_node/rgb/color/rect/image', rgb_topic),
+            ('/lr/mavlink/trajectory_future', future_path_topic),
         ],
     )
 
@@ -141,6 +143,11 @@ def generate_launch_description():
             'rgb_topic',
             default_value=['/', camera_name, '/zed_node/rgb/color/rect/image'],
             description='Rectified RGB image topic displayed by RViz.',
+        ),
+        DeclareLaunchArgument(
+            'future_path_topic',
+            default_value='/lr/mavlink/trajectory_future',
+            description='Future ENU trajectory displayed by RViz.',
         ),
         DeclareLaunchArgument(
             'rviz_config',

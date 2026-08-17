@@ -5,6 +5,7 @@ log/
 
 # Local reference repository (not part of this workspace)
 src/zed-ros2-examples/
+local_ref/
 
 # Python
 __pycache__/

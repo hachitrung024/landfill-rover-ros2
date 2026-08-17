@@ -3,7 +3,7 @@
 <package format="3">
   <name>lr_display_rviz2</name>
   <version>0.1.0</version>
-  <description>Minimal RGB and registered point cloud RViz2 display for ZED cameras.</description>
+  <description>RViz2 display for ZED RGB, transformed point clouds, and future trajectories.</description>
 
   <maintainer email="maintainer@example.com">Landfill Rover Maintainers</maintainer>
   <license>Apache-2.0</license>
@@ -13,6 +13,7 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>zed_wrapper</exec_depend>
 
