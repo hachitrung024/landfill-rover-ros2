@@ -75,8 +75,8 @@ def _launch_setup(context):
     position_topic = _value(context, 'mavlink_position_topic')
     attitude_topic = _value(context, 'mavlink_attitude_topic')
     future_path_topic = _value(context, 'mavlink_future_path_topic')
-    future_path_horizon_s = float(_value(context, 'future_path_horizon_s'))
-    future_path_step_s = float(_value(context, 'future_path_step_s'))
+    future_path_radius_m = float(_value(context, 'future_path_radius_m'))
+    future_path_step_m = float(_value(context, 'future_path_step_m'))
     base_frame = _value(context, 'mavlink_base_frame')
     extrinsic = {
         name: float(_value(context, name))
@@ -148,8 +148,8 @@ def _launch_setup(context):
                 'position_topic': position_topic,
                 'attitude_topic': attitude_topic,
                 'future_path_topic': future_path_topic,
-                'future_path_horizon_s': future_path_horizon_s,
-                'future_path_step_s': future_path_step_s,
+                'future_path_radius_m': future_path_radius_m,
+                'future_path_step_m': future_path_step_m,
                 'world_frame': target_frame,
             }],
         ))
@@ -298,14 +298,14 @@ def generate_launch_description():
             description='Recorded future ENU trajectory for each cloud.',
         ),
         DeclareLaunchArgument(
-            'future_path_horizon_s',
-            default_value='10.0',
-            description='Look-ahead duration of the recorded future path.',
+            'future_path_radius_m',
+            default_value='15.0',
+            description='XY radius of the recorded future path, in metres.',
         ),
         DeclareLaunchArgument(
-            'future_path_step_s',
+            'future_path_step_m',
             default_value='0.2',
-            description='Time interval between future path poses.',
+            description='Ground distance between future path poses.',
         ),
         DeclareLaunchArgument(
             'mavlink_base_frame',

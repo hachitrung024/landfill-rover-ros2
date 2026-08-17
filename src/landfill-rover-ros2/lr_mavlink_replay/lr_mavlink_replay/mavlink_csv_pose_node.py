@@ -50,11 +50,11 @@ class MavlinkCsvPoseNode(Node):
         future_path_topic = self.declare_parameter(
             'future_path_topic', '/lr/mavlink/trajectory_future'
         ).value
-        self._future_path_horizon_s = float(self.declare_parameter(
-            'future_path_horizon_s', 10.0
+        self._future_path_radius_m = float(self.declare_parameter(
+            'future_path_radius_m', 10.0
         ).value)
-        self._future_path_step_s = float(self.declare_parameter(
-            'future_path_step_s', 0.2
+        self._future_path_step_m = float(self.declare_parameter(
+            'future_path_step_m', 0.2
         ).value)
         self._world_frame = self.declare_parameter(
             'world_frame', 'map'
@@ -76,10 +76,10 @@ class MavlinkCsvPoseNode(Node):
             maximum_gps_gap_s=float(maximum_gps_gap_s),
             maximum_attitude_gap_s=float(maximum_attitude_gap_s),
         )
-        self._pose_log.sample_future(
+        self._pose_log.sample_future_within_radius(
             self._pose_log.gps_time[0],
-            self._future_path_horizon_s,
-            self._future_path_step_s,
+            self._future_path_radius_m,
+            self._future_path_step_m,
         )
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -106,15 +106,15 @@ class MavlinkCsvPoseNode(Node):
         origin = self._pose_log.origin
         self.get_logger().info(
             'MAVLink CSV pose replay: input=%s position=%s attitude=%s '
-            'future_path=%s (%.1f s at %.3f s) '
+            'future_path=%s (%.1f m XY radius at %.3f m) '
             'ENU origin=(%.9f, %.9f, %.3f m)'
             % (
                 input_topic,
                 position_topic,
                 attitude_topic,
                 future_path_topic,
-                self._future_path_horizon_s,
-                self._future_path_step_s,
+                self._future_path_radius_m,
+                self._future_path_step_m,
                 origin['latitude_deg'],
                 origin['longitude_deg'],
                 origin['altitude_m'],
@@ -172,10 +172,10 @@ class MavlinkCsvPoseNode(Node):
         path = Path()
         path.header.stamp = cloud.header.stamp
         path.header.frame_id = self._world_frame
-        samples = self._pose_log.sample_future(
+        samples = self._pose_log.sample_future_within_radius(
             timestamp_s,
-            self._future_path_horizon_s,
-            self._future_path_step_s,
+            self._future_path_radius_m,
+            self._future_path_step_m,
         )
         for index, sample in enumerate(samples):
             pose = PoseStamped()

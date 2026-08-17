@@ -208,7 +208,7 @@ def test_invalid_geodetic_coordinates_are_filtered(tmp_path):
     np.testing.assert_allclose(log.gps_time, [1.0, 2.0])
 
 
-def test_future_path_sampling_stops_at_log_end(tmp_path):
+def test_future_path_spatial_sampling_stops_at_log_end(tmp_path):
     gps = tmp_path / 'gps.csv'
     attitude = tmp_path / 'attitude.csv'
     _write(
@@ -229,11 +229,19 @@ def test_future_path_sampling_stops_at_log_end(tmp_path):
         str(gps), str(attitude),
         maximum_attitude_gap_s=2.0,
     )
-    samples = log.sample_future(0.0, horizon_s=10.0, step_s=0.5)
-    np.testing.assert_allclose(
-        [sample.timestamp_s for sample in samples],
-        [0.0, 0.5, 1.0, 1.5, 2.0],
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=10.0, step_m=0.5
     )
+    assert samples[0].timestamp_s == 0.0
+    assert samples[-1].timestamp_s == 2.0
+    ground_steps = [
+        np.linalg.norm(
+            current.position_enu_m[:2] - previous.position_enu_m[:2]
+        )
+        for previous, current in zip(samples, samples[1:])
+    ]
+    np.testing.assert_allclose(ground_steps[:-1], 0.5, atol=1e-9)
+    assert 0.0 < ground_steps[-1] <= 0.5
     assert samples[-1].position_enu_m[0] > samples[0].position_enu_m[0]
 
 
@@ -254,7 +262,9 @@ def test_future_path_sampling_rejects_invalid_configuration(tmp_path):
     )
     log = load_pose_log(str(gps), str(attitude))
     with np.testing.assert_raises_regex(ValueError, 'step must be positive'):
-        log.sample_future(0.0, horizon_s=1.0, step_s=0.0)
+        log.sample_future_within_radius(0.0, radius_m=1.0, step_m=0.0)
+    with np.testing.assert_raises_regex(ValueError, 'radius must be positive'):
+        log.sample_future_within_radius(0.0, radius_m=0.0, step_m=0.1)
 
 
 def test_future_path_does_not_bridge_gps_gap(tmp_path):
@@ -280,10 +290,12 @@ def test_future_path_does_not_bridge_gps_gap(tmp_path):
         '6,0,0,0\n',
     )
     log = load_pose_log(str(gps), str(attitude))
-    samples = log.sample_future(0.0, horizon_s=6.0, step_s=1.0)
-    np.testing.assert_allclose(
-        [sample.timestamp_s for sample in samples], [0.0, 1.0]
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=100.0, step_m=0.5
     )
+    assert samples[0].timestamp_s == 0.0
+    assert samples[-1].timestamp_s == 1.0
+    assert all(sample.timestamp_s <= 1.0 for sample in samples)
 
 
 def test_future_gps_path_is_not_cut_by_future_attitude_gap(tmp_path):
@@ -304,7 +316,98 @@ def test_future_gps_path_is_not_cut_by_future_attitude_gap(tmp_path):
     )
     log = load_pose_log(str(gps), str(attitude))
     assert log.sample_at(1.0) is None
-    samples = log.sample_future(0.0, horizon_s=2.0, step_s=1.0)
-    np.testing.assert_allclose(
-        [sample.timestamp_s for sample in samples], [0.0, 1.0, 2.0]
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=10.0, step_m=0.5
+    )
+    assert samples[0].timestamp_s == 0.0
+    assert samples[-1].timestamp_s == 2.0
+
+
+def test_future_path_stops_at_xy_radius_boundary(tmp_path):
+    gps = tmp_path / 'gps.csv'
+    attitude = tmp_path / 'attitude.csv'
+    _write(
+        gps,
+        'timestamp_unix_s,lat,lon,alt,fix_type\n'
+        '0,0,0,0,3\n'
+        '1,0,0.00001,0,3\n'
+        '2,0,0.00002,0,3\n',
+    )
+    _write(
+        attitude,
+        'timestamp_unix_s,roll,pitch,yaw\n'
+        '0,0,0,0\n'
+        '2,0,0,0\n',
+    )
+    log = load_pose_log(str(gps), str(attitude), origin_samples=1)
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=1.5, step_m=0.5
+    )
+    radii = [
+        np.linalg.norm(
+            sample.position_enu_m[:2] - samples[0].position_enu_m[:2]
+        )
+        for sample in samples
+    ]
+    np.testing.assert_allclose(radii, [0.0, 0.5, 1.0, 1.5], atol=1e-9)
+    assert 1.0 < samples[-1].timestamp_s < 2.0
+
+
+def test_future_path_does_not_reenter_radius_after_first_exit(tmp_path):
+    gps = tmp_path / 'gps.csv'
+    attitude = tmp_path / 'attitude.csv'
+    _write(
+        gps,
+        'timestamp_unix_s,lat,lon,alt,fix_type\n'
+        '0,0,0,0,3\n'
+        '1,0,0.00002,0,3\n'
+        '2,0,0,0,3\n',
+    )
+    _write(
+        attitude,
+        'timestamp_unix_s,roll,pitch,yaw\n'
+        '0,0,0,0\n'
+        '2,0,0,0\n',
+    )
+    log = load_pose_log(str(gps), str(attitude), origin_samples=1)
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=1.0, step_m=0.25
+    )
+    assert samples[-1].timestamp_s < 1.0
+    assert np.isclose(
+        np.linalg.norm(
+            samples[-1].position_enu_m[:2]
+            - samples[0].position_enu_m[:2]
+        ),
+        1.0,
+    )
+
+
+def test_future_path_radius_ignores_height(tmp_path):
+    gps = tmp_path / 'gps.csv'
+    attitude = tmp_path / 'attitude.csv'
+    _write(
+        gps,
+        'timestamp_unix_s,lat,lon,alt,fix_type\n'
+        '0,0,0,0,3\n'
+        '1,0,0,100,3\n'
+        '2,0,0.00001,100,3\n',
+    )
+    _write(
+        attitude,
+        'timestamp_unix_s,roll,pitch,yaw\n'
+        '0,0,0,0\n'
+        '2,0,0,0\n',
+    )
+    log = load_pose_log(str(gps), str(attitude), origin_samples=1)
+    samples = log.sample_future_within_radius(
+        0.0, radius_m=2.0, step_m=0.5
+    )
+    assert samples[-1].timestamp_s == 2.0
+    assert samples[-1].position_enu_m[2] > 99.0
+    assert all(
+        np.linalg.norm(
+            sample.position_enu_m[:2] - samples[0].position_enu_m[:2]
+        ) <= 2.0
+        for sample in samples
     )

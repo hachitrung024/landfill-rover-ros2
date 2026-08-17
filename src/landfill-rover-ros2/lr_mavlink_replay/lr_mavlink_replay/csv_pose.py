@@ -407,39 +407,121 @@ class MavlinkPoseLog:
             )
         return PoseSample(timestamp_s, position, quaternion)
 
-    def sample_future(
+    def sample_future_within_radius(
         self,
         timestamp_s: float,
-        horizon_s: float,
-        step_s: float,
+        radius_m: float,
+        step_m: float,
     ) -> list[PositionSample]:
-        """Sample a continuous future GPS path, stopping at the first gap."""
+        """Sample the future GPS polyline inside an XY circle around the rover."""
         timestamp_s = float(timestamp_s)
-        horizon_s = float(horizon_s)
-        step_s = float(step_s)
-        if not np.isfinite(horizon_s) or not np.isfinite(step_s):
-            raise ValueError('future path horizon and step must be finite')
-        if horizon_s < 0.0:
-            raise ValueError('future path horizon must be non-negative')
-        if step_s <= 0.0:
+        radius_m = float(radius_m)
+        step_m = float(step_m)
+        if not np.isfinite(radius_m) or not np.isfinite(step_m):
+            raise ValueError('future path radius and step must be finite')
+        if radius_m <= 0.0:
+            raise ValueError('future path radius must be positive')
+        if step_m <= 0.0:
             raise ValueError('future path step must be positive')
-        if horizon_s / step_s > 10000:
+        if radius_m / step_m > 10000:
             raise ValueError('future path must contain at most 10001 poses')
 
-        offsets = [
-            index * step_s
-            for index in range(int(np.floor(horizon_s / step_s)) + 1)
-        ]
-        if horizon_s - offsets[-1] > 1e-9:
-            offsets.append(horizon_s)
+        current_position = self.position_at(timestamp_s)
+        if current_position is None:
+            return []
 
-        samples = []
-        for offset_s in offsets:
-            sample_time_s = timestamp_s + offset_s
-            position = self.position_at(sample_time_s)
-            if position is None:
+        vertices = [PositionSample(timestamp_s, current_position)]
+        previous_time = timestamp_s
+        previous_position = current_position
+        first_future_index = int(np.searchsorted(
+            self.gps_time, timestamp_s, side='right'
+        ))
+        for index in range(first_future_index, len(self.gps_time)):
+            candidate_time = float(self.gps_time[index])
+            candidate_position = self.gps_position[index]
+            if candidate_time - previous_time > self.maximum_gps_gap_s:
                 break
-            samples.append(PositionSample(sample_time_s, position))
+
+            radial_distance = float(np.linalg.norm(
+                candidate_position[:2] - current_position[:2]
+            ))
+            if radial_distance <= radius_m:
+                vertices.append(PositionSample(
+                    candidate_time, candidate_position.copy()
+                ))
+                previous_time = candidate_time
+                previous_position = candidate_position
+                continue
+
+            segment_xy = candidate_position[:2] - previous_position[:2]
+            offset_xy = previous_position[:2] - current_position[:2]
+            quadratic_a = float(np.dot(segment_xy, segment_xy))
+            quadratic_b = 2.0 * float(np.dot(offset_xy, segment_xy))
+            quadratic_c = float(np.dot(offset_xy, offset_xy) - radius_m ** 2)
+            discriminant = max(
+                0.0,
+                quadratic_b ** 2 - 4.0 * quadratic_a * quadratic_c,
+            )
+            roots = (
+                (-quadratic_b - np.sqrt(discriminant))
+                / (2.0 * quadratic_a),
+                (-quadratic_b + np.sqrt(discriminant))
+                / (2.0 * quadratic_a),
+            )
+            fractions = [value for value in roots if 0.0 <= value <= 1.0]
+            if fractions:
+                fraction = max(fractions)
+                boundary_position = previous_position + fraction * (
+                    candidate_position - previous_position
+                )
+                boundary_time = previous_time + fraction * (
+                    candidate_time - previous_time
+                )
+                if fraction > 1e-12:
+                    vertices.append(PositionSample(
+                        boundary_time, boundary_position
+                    ))
+            break
+
+        samples = [vertices[0]]
+        next_distance = step_m
+        travelled_distance = 0.0
+        for start, end in zip(vertices, vertices[1:]):
+            segment_distance = float(np.linalg.norm(
+                end.position_enu_m[:2] - start.position_enu_m[:2]
+            ))
+            if segment_distance <= 1e-12:
+                continue
+            segment_end_distance = travelled_distance + segment_distance
+            while next_distance <= segment_end_distance + 1e-9:
+                if len(samples) >= 10001:
+                    return samples
+                amount = min(
+                    1.0,
+                    (next_distance - travelled_distance) / segment_distance,
+                )
+                samples.append(PositionSample(
+                    start.timestamp_s + amount * (
+                        end.timestamp_s - start.timestamp_s
+                    ),
+                    start.position_enu_m + amount * (
+                        end.position_enu_m - start.position_enu_m
+                    ),
+                ))
+                next_distance += step_m
+            travelled_distance = segment_end_distance
+
+        final_vertex = vertices[-1]
+        if (
+            len(samples) < 10001
+            and not np.allclose(
+                samples[-1].position_enu_m,
+                final_vertex.position_enu_m,
+                rtol=0.0,
+                atol=1e-9,
+            )
+        ):
+            samples.append(final_vertex)
         return samples
 
 

@@ -179,12 +179,15 @@ Sau khi một cặp CSV đã hợp lệ, session không fallback từng frame. C
 ngoài khoảng log, nằm giữa hai GPS cách nhau hơn 2 giây, hoặc giữa hai attitude
 cách nhau hơn 0,5 giây sẽ bị bỏ. Cách này tránh trộn hai hệ `world` khác nhau.
 
-Tại mỗi cloud hợp lệ, node cũng publish đoạn GPS đã ghi từ thời điểm hiện tại
-đến 10 giây tiếp theo lên `/lr/mavlink/trajectory_future`, mặc định cách nhau
-0,2 giây; orientation của mỗi pose biểu diễn hướng tiếp tuyến của đường GPS.
-`Path.header.stamp` bằng timestamp cloud, nên node xử lý địa hình có
-thể đồng bộ `Path` với `/lr/point_cloud/cloud_in_map`. Path dừng ở gap đầu tiên
-hoặc cuối log; nó không nối đường xuyên qua vùng thiếu dữ liệu.
+Tại mỗi cloud hợp lệ, node cũng publish đoạn GPS đã ghi nằm trong bán kính XY
+10 m quanh vị trí hiện tại lên `/lr/mavlink/trajectory_future`, mặc định lấy
+mẫu cách nhau 0,2 m theo quãng đường trên mặt đất. Orientation của mỗi pose
+biểu diễn hướng tiếp tuyến của đường GPS. `Path.header.stamp` bằng timestamp
+cloud, nên node xử lý địa hình có thể đồng bộ `Path` với
+`/lr/point_cloud/cloud_in_map`. Path dừng khi lần đầu ra khỏi vòng tròn, gặp
+gap GPS hoặc cuối log; nó không lấy lại đoạn đường quay vào vòng tròn và không
+nối đường xuyên qua vùng thiếu dữ liệu. Tọa độ Z vẫn được giữ trong từng pose
+nhưng không tham gia phép kiểm tra bán kính.
 
 ### Chạy headless
 
@@ -230,8 +233,8 @@ tiên.
 | `mavlink_position_topic` | `/lr/mavlink/position_enu` | Vị trí ENU của rover base tại timestamp cloud. |
 | `mavlink_attitude_topic` | `/lr/mavlink/attitude_enu` | Hướng ENU/FLU của rover base tại timestamp cloud. |
 | `mavlink_future_path_topic` | `/lr/mavlink/trajectory_future` | Đoạn trajectory tương lai đã ghi, kiểu `nav_msgs/msg/Path`. |
-| `future_path_horizon_s` | `10.0` | Khoảng thời gian nhìn trước của trajectory, tính bằng giây. |
-| `future_path_step_s` | `0.2` | Khoảng thời gian giữa hai pose trên trajectory. |
+| `future_path_radius_m` | `10.0` | Bán kính XY quanh rover của trajectory tương lai, tính bằng mét. |
+| `future_path_step_m` | `0.2` | Quãng đường mặt đất giữa hai pose trên trajectory, tính bằng mét. |
 | `mavlink_base_frame` | `lr_base_link` | Tên frame FLU của rover base. |
 | `base_to_camera_x_m`, `base_to_camera_y_m`, `base_to_camera_z_m` | `0.0` | Tịnh tiến camera trong base FLU, đơn vị mét. |
 | `base_to_camera_roll_deg`, `base_to_camera_pitch_deg`, `base_to_camera_yaw_deg` | `0.0` | Fixed-axis RPY của camera trong base, đơn vị độ. |
